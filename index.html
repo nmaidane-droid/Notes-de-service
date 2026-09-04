@@ -834,7 +834,7 @@ document.getElementById('tabArchive').onclick = ()=>switchTab('archive');
 function exportPDF(opts={}){
   // Build tag embedded in PDF metadata (Fichier > Propriétés côté lecteur PDF) —
   // permet de vérifier à coup sûr quelle version de l'appli a produit un PDF donné.
-  const APP_BUILD = 'nds-2026-09-04-4';
+  const APP_BUILD = 'nds-2026-09-04-5';
   // Only re-read the on-screen editable sheet when exporting from the editor
   // itself. When called from the Archives list, `state` already holds the
   // correct archived record — re-syncing from the (possibly stale/hidden)
@@ -852,6 +852,28 @@ function exportPDF(opts={}){
   const BAND_H = 8;
   let y = 0;
 
+  // Tracks the "current" text style so it can be restored after the header
+  // band is redrawn on a new page. BUG THIS FIXES: drawHeaderBand() sets
+  // white text color for its own label — if a page break happens mid­
+  // paragraph (checkSpace triggers newPage() in the middle of a wrapped-line
+  // loop), any code that set color/font ONCE before that loop (instead of on
+  // every line) would keep drawing in white-on-white after the break —
+  // invisible text that still "exists" (found by copy/paste or text
+  // extraction) but never shows up when rendered. setText() is now the only
+  // way body content sets its style, so newPage() can always put it back.
+  let curFont = 'times', curStyle = 'normal', curSize = 10.5, curColor = [26,26,46];
+  function setText(font, style, size, color){
+    curFont = font; curStyle = style; curSize = size; curColor = color;
+    doc.setFont(font, style);
+    doc.setFontSize(size);
+    doc.setTextColor(color[0], color[1], color[2]);
+  }
+  function restoreText(){
+    doc.setFont(curFont, curStyle);
+    doc.setFontSize(curSize);
+    doc.setTextColor(curColor[0], curColor[1], curColor[2]);
+  }
+
   function drawHeaderBand(){
     doc.setFillColor(139,0,0);
     doc.rect(0, 0, pageWidth, BAND_H, 'F');
@@ -867,6 +889,7 @@ function exportPDF(opts={}){
   function newPage(){
     doc.addPage();
     drawHeaderBand();
+    restoreText(); // <- the actual fix: undo the header band's white text color
   }
 
   function checkSpace(needed){
@@ -879,9 +902,7 @@ function exportPDF(opts={}){
     const fontSize = opts.fontSize || 10.5;
     const lineHeight = opts.lineHeight || 5.2;
     const bold = opts.bold || false;
-    doc.setFont('times', bold ? 'bold' : 'normal');
-    doc.setFontSize(fontSize);
-    doc.setTextColor(26,26,46);
+    setText('times', bold ? 'bold' : 'normal', fontSize, [26,26,46]);
     const lines = doc.splitTextToSize(text, contentWidth);
     lines.forEach(line=>{
       checkSpace(lineHeight);
@@ -892,9 +913,7 @@ function exportPDF(opts={}){
 
   function writeSectionTitle(text){
     y += 3;
-    doc.setFont('helvetica','bold');
-    doc.setFontSize(10.5);
-    doc.setTextColor(139,0,0);
+    setText('helvetica', 'bold', 10.5, [139,0,0]);
     doc.text(text.toUpperCase(), marginX, y);
     y += 7.5;
   }
@@ -903,12 +922,13 @@ function exportPDF(opts={}){
   // reserves room for the title block PLUS at least the first couple of
   // content lines before deciding whether to break to a new page.
   // Renders a section's body with structure: standalone numbered ALL-CAPS
-  // sub-headers ("1. TITRE") in bold, "• " bullets with a hanging indent so
-  // wrapped lines align under the text (not under the bullet), and plain
-  // paragraph lines justified as before.
+  // sub-headers ("1. TITRE") in bold with a slight indent, "• " bullets with
+  // a hanging indent so wrapped lines align under the text (not under the
+  // bullet), and plain paragraph lines justified as before.
   function writeSectionBody(content, opts={}){
     const fontSize = opts.fontSize || 10.3;
     const lineHeight = opts.lineHeight || 5;
+    const subheaderX = marginX + 3.5;
     const bulletTextX = marginX + 9;
     const bulletMarkX = marginX + 3;
     const lines = String(content).split('\n').map(l=>l.trim()).filter(l=>l.length>0);
@@ -920,17 +940,13 @@ function exportPDF(opts={}){
       if(isSubheader){
         checkSpace(lineHeight + 4);
         y += 2.5;
-        doc.setFont('helvetica','bold');
-        doc.setFontSize(fontSize + 0.1);
-        doc.setTextColor(26,26,46);
-        const wrapped = doc.splitTextToSize(line, contentWidth);
-        wrapped.forEach(w=>{ checkSpace(lineHeight); doc.text(w, marginX, y); y += lineHeight; });
+        setText('helvetica', 'bold', fontSize + 0.1, [26,26,46]);
+        const wrapped = doc.splitTextToSize(line, contentWidth - (subheaderX - marginX));
+        wrapped.forEach(w=>{ checkSpace(lineHeight); doc.text(w, subheaderX, y); y += lineHeight; });
         y += 1;
       } else if(isBullet){
         const bulletText = line.replace(/^•\s*/, '');
-        doc.setFont('times','normal');
-        doc.setFontSize(fontSize);
-        doc.setTextColor(26,26,46);
+        setText('times', 'normal', fontSize, [26,26,46]);
         const wrapped = doc.splitTextToSize(bulletText, contentWidth - (bulletTextX - marginX));
         wrapped.forEach((w,idx)=>{
           checkSpace(lineHeight);
@@ -939,9 +955,7 @@ function exportPDF(opts={}){
           y += lineHeight;
         });
       } else {
-        doc.setFont('times','normal');
-        doc.setFontSize(fontSize);
-        doc.setTextColor(26,26,46);
+        setText('times', 'normal', fontSize, [26,26,46]);
         const wrapped = doc.splitTextToSize(line, contentWidth);
         wrapped.forEach(w=>{ checkSpace(lineHeight); doc.text(w, marginX, y); y += lineHeight; });
       }
@@ -1032,9 +1046,7 @@ function exportPDF(opts={}){
     y += 3;
 
     if(table.note && table.note.trim()){
-      doc.setFont('times','normal');
-      doc.setFontSize(9.5);
-      doc.setTextColor(26,26,46);
+      setText('times', 'normal', 9.5, [26,26,46]);
       const noteLines = doc.splitTextToSize(table.note, contentWidth);
       noteLines.forEach(line=>{ checkSpace(4.8); doc.text(line, marginX, y); y += 4.8; });
     }
@@ -1070,14 +1082,12 @@ function exportPDF(opts={}){
   const colW = contentWidth/2;
   const labelW = 24;
   rows.forEach(([k1,v1,k2,v2])=>{
-    doc.setFont('helvetica','bold');
-    doc.setFontSize(9.3);
-    doc.setTextColor(26,26,46);
+    setText('helvetica', 'bold', 9.3, [26,26,46]);
     const v1Lines = doc.splitTextToSize(v1, colW - labelW - 4);
     const v2Lines = doc.splitTextToSize(v2, colW - labelW - 4);
     const rowH = Math.max(v1Lines.length, v2Lines.length) * 4.6 + 2.5;
     checkSpace(rowH);
-    doc.setFont('helvetica','bold');
+    setText('helvetica', 'bold', 9.3, [26,26,46]);
     doc.text(k1, marginX, y);
     doc.text(k2, marginX + colW, y);
     doc.setFont('helvetica','normal');
@@ -1110,9 +1120,7 @@ function exportPDF(opts={}){
 
   // Closing
   y += 2;
-  doc.setFont('times','normal');
-  doc.setFontSize(9.8);
-  doc.setTextColor(26,26,46);
+  setText('times', 'normal', 9.8, [26,26,46]);
   const closingLines = doc.splitTextToSize(state.closingText || state.closing, contentWidth);
   closingLines.forEach(line=>{ checkSpace(5); doc.text(line, marginX, y); y+=5; });
 
