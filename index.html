@@ -288,7 +288,6 @@
   .archive-row .actions button.is-pressed[data-act="open"]{background:var(--ink);border-color:var(--ink);color:#fff;}
   .archive-row .actions button.is-pressed[data-act="pdf"]{background:var(--red);border-color:var(--red);color:#fff;}
   .archive-row .actions button.is-pressed[data-act="del"]{background:var(--bordeaux);border-color:var(--bordeaux);color:#fff;}
-  .archive-row .actions button.confirm-delete{background:var(--bordeaux);border-color:var(--bordeaux);color:#fff;}
   .archive-empty{color:var(--muted-soft);text-align:center;padding:60px 0;font-size:14px;}
 </style>
 </head>
@@ -694,20 +693,11 @@ function loadFromArchive(record){
 
 /* Delete uses a two-tap inline confirm on the button itself instead of
    window.confirm(), which some mobile browser contexts suppress silently. */
-function deleteFromArchive(id, btn){
-  if(btn && !btn.classList.contains('confirm-delete')){
-    btn.classList.add('confirm-delete');
-    btn.textContent = 'Confirmer ?';
-    btn._resetTimer = setTimeout(()=>{
-      btn.classList.remove('confirm-delete');
-      btn.textContent = 'Supprimer';
-    }, 3000);
-    return;
-  }
+function deleteFromArchive(id){
+  if(!confirm('Supprimer cette note des archives ?')) return;
   let archive = JSON.parse(localStorage.getItem('ns:archive') || '[]');
   archive = archive.filter(r=>r.id!==id);
   localStorage.setItem('ns:archive', JSON.stringify(archive));
-  showToast('Note supprimée des archives');
   renderArchiveList();
 }
 
@@ -742,7 +732,7 @@ function renderArchiveList(filter=''){
     `;
     row.querySelector('[data-act="open"]').onclick = (e)=>{ e.stopPropagation(); loadFromArchive(r); };
     row.querySelector('[data-act="pdf"]').onclick = (e)=>{ e.stopPropagation(); state = {...r, category: CATEGORIES.find(c=>c.label===r.category)}; exportPDF({syncFromEditor:false}); };
-    row.querySelector('[data-act="del"]').onclick = (e)=>{ e.stopPropagation(); deleteFromArchive(r.id, e.currentTarget); };
+    row.querySelector('[data-act="del"]').onclick = (e)=>{ e.stopPropagation(); deleteFromArchive(r.id); };
 
     row.querySelectorAll('.actions button').forEach(btn=>{
       const press = ()=>btn.classList.add('is-pressed');
