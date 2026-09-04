@@ -544,7 +544,7 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte avant/après, sans bal
 }
 
 La note doit obligatoirement comporter ces sections, dans cet ordre, avec des titres identiques ou très proches : ${skeleton.join(' / ')}.
-Chaque section doit contenir un contenu substantiel (60 à 150 mots), concret et actionnable, pas de généralités vagues.${fusionInstruction}
+Chaque section doit contenir un contenu substantiel (60 à 120 mots), concret et actionnable, pas de généralités vagues — reste dans cette fourchette, ne dépasse pas 120 mots par section.${fusionInstruction}
 
 Tableau des risques (obligatoire dès qu'une section traite des risques ou de leurs conséquences — titre contenant "Risque(s)") : ajoute un champ "table" avec exactement les colonnes ["Risque","Origine / Facteur déclenchant","Conséquence opérationnelle"] et 4 à 7 lignes concrètes et spécifiques au sujet (jamais de généralités). Le "content" de cette section reste court (une phrase d'intro, ou une chaîne vide) — le détail va dans le tableau, pas dans le texte. Ajoute aussi un champ "note" dans "table" reprenant, sous forme d'une phrase de type "Nota : ...", une nuance replaçant ces risques dans le cadre normal d'exploitation (à l'image d'un rappel constructeur/réglementaire) ; omets ce champ si ça n'apporte rien. N'ajoute PAS de champ "table" pour les autres sections.
 
@@ -565,7 +565,7 @@ ${keyPoints ? 'Points clés à intégrer impérativement :\n' + keyPoints : ''}`
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        max_tokens: 7000,
+        max_tokens: 5000,
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }]
       })
@@ -605,7 +605,10 @@ ${keyPoints ? 'Points clés à intégrer impérativement :\n' + keyPoints : ''}`
 
     renderSheet();
   }catch(e){
-    errEl.textContent = 'Erreur de génération : ' + (e.message || 'réessayez.');
+    const isNetworkFailure = e instanceof TypeError && /fetch/i.test(e.message || '');
+    errEl.textContent = isNetworkFailure
+      ? 'Connexion interrompue pendant la génération (souvent un délai serveur dépassé sur les notes longues). Réessayez.'
+      : 'Erreur de génération : ' + (e.message || 'réessayez.');
     errEl.style.display = 'block';
     console.error(e);
   }finally{
