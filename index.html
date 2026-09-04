@@ -265,8 +265,9 @@
   }
   .archive-row{
     display:flex;flex-direction:column;align-items:stretch;gap:12px;
-    padding:16px 16px 14px;border:1px solid var(--line-doc);cursor:pointer;
+    padding:16px 16px 14px;border:1px solid var(--line-doc);
     background:var(--white);margin-bottom:10px;border-radius:2px;
+    -webkit-tap-highlight-color:transparent;
   }
   .archive-row:hover{border-color:var(--red);}
   .archive-row .info{width:100%;}
@@ -280,16 +281,14 @@
   .archive-row .actions button{
     background:transparent;border:1px solid var(--line-doc);color:var(--muted);
     font-size:12.5px;font-weight:500;padding:9px 6px;border-radius:2px;cursor:pointer;
-    text-align:center;transition:background .1s,color .1s,border-color .1s;
-    -webkit-tap-highlight-color:transparent;
+    text-align:center;transition:background .08s,color .08s,border-color .08s;
+    -webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;
   }
-  .archive-row .actions button[data-act="open"]:hover{border-color:var(--ink);color:var(--ink);}
-  .archive-row .actions button[data-act="open"]:active{background:var(--ink);border-color:var(--ink);color:#fff;}
-  .archive-row .actions button[data-act="pdf"]:hover{border-color:var(--red);color:var(--red);}
-  .archive-row .actions button[data-act="pdf"]:active{background:var(--red);border-color:var(--red);color:#fff;}
   .archive-row .actions button[data-act="del"]{border-color:rgba(139,0,0,0.35);color:var(--bordeaux);}
-  .archive-row .actions button[data-act="del"]:hover{border-color:var(--bordeaux);}
-  .archive-row .actions button[data-act="del"]:active{background:var(--bordeaux);border-color:var(--bordeaux);color:#fff;}
+  .archive-row .actions button.is-pressed[data-act="open"]{background:var(--ink);border-color:var(--ink);color:#fff;}
+  .archive-row .actions button.is-pressed[data-act="pdf"]{background:var(--red);border-color:var(--red);color:#fff;}
+  .archive-row .actions button.is-pressed[data-act="del"]{background:var(--bordeaux);border-color:var(--bordeaux);color:#fff;}
+  .archive-row .actions button.confirm-delete{background:var(--bordeaux);border-color:var(--bordeaux);color:#fff;}
   .archive-empty{color:var(--muted-soft);text-align:center;padding:60px 0;font-size:14px;}
 </style>
 </head>
@@ -656,8 +655,35 @@ function saveToArchive(){
   const prefix = state.category ? state.category.prefix : 'OPS';
   commitRefCounter(prefix);
   document.getElementById('refInput').value = nextRef(prefix);
-  alert('Note enregistrée dans les archives : ' + record.ref);
+  showToast('Note enregistrée dans les archives — ' + record.ref);
   renderArchiveList();
+}
+
+/* ---------------- Toast (replaces alert(), always visible in-app) ---------------- */
+let toastTimer = null;
+function showToast(message){
+  let toast = document.getElementById('appToast');
+  if(!toast){
+    toast = document.createElement('div');
+    toast.id = 'appToast';
+    toast.style.cssText = `
+      position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);
+      background:var(--ink);color:#fff;font-family:'IBM Plex Sans',sans-serif;font-size:13px;
+      padding:12px 20px;border-radius:3px;box-shadow:0 10px 30px rgba(0,0,0,0.25);
+      z-index:9999;opacity:0;transition:opacity .2s,transform .2s;max-width:88vw;text-align:center;
+    `;
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  clearTimeout(toastTimer);
+  requestAnimationFrame(()=>{
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateX(-50%) translateY(0)';
+  });
+  toastTimer = setTimeout(()=>{
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(-50%) translateY(20px)';
+  }, 2600);
 }
 
 function loadFromArchive(record){
@@ -666,11 +692,22 @@ function loadFromArchive(record){
   renderSheet();
 }
 
-function deleteFromArchive(id){
-  if(!confirm('Supprimer cette note des archives ?')) return;
+/* Delete uses a two-tap inline confirm on the button itself instead of
+   window.confirm(), which some mobile browser contexts suppress silently. */
+function deleteFromArchive(id, btn){
+  if(btn && !btn.classList.contains('confirm-delete')){
+    btn.classList.add('confirm-delete');
+    btn.textContent = 'Confirmer ?';
+    btn._resetTimer = setTimeout(()=>{
+      btn.classList.remove('confirm-delete');
+      btn.textContent = 'Supprimer';
+    }, 3000);
+    return;
+  }
   let archive = JSON.parse(localStorage.getItem('ns:archive') || '[]');
   archive = archive.filter(r=>r.id!==id);
   localStorage.setItem('ns:archive', JSON.stringify(archive));
+  showToast('Note supprimée des archives');
   renderArchiveList();
 }
 
@@ -704,8 +741,17 @@ function renderArchiveList(filter=''){
       </div>
     `;
     row.querySelector('[data-act="open"]').onclick = (e)=>{ e.stopPropagation(); loadFromArchive(r); };
-    row.querySelector('[data-act="pdf"]').onclick = (e)=>{ e.stopPropagation(); state = {...r, category: CATEGORIES.find(c=>c.label===r.category)}; exportPDF(); };
-    row.querySelector('[data-act="del"]').onclick = (e)=>{ e.stopPropagation(); deleteFromArchive(r.id); };
+    row.querySelector('[data-act="pdf"]').onclick = (e)=>{ e.stopPropagation(); state = {...r, category: CATEGORIES.find(c=>c.label===r.category)}; exportPDF({syncFromEditor:false}); };
+    row.querySelector('[data-act="del"]').onclick = (e)=>{ e.stopPropagation(); deleteFromArchive(r.id, e.currentTarget); };
+
+    row.querySelectorAll('.actions button').forEach(btn=>{
+      const press = ()=>btn.classList.add('is-pressed');
+      const release = ()=>btn.classList.remove('is-pressed');
+      btn.addEventListener('pointerdown', press);
+      btn.addEventListener('pointerup', release);
+      btn.addEventListener('pointerleave', release);
+      btn.addEventListener('pointercancel', release);
+    });
     list.appendChild(row);
   });
 }
@@ -725,8 +771,14 @@ document.getElementById('tabEditor').onclick = ()=>switchTab('editor');
 document.getElementById('tabArchive').onclick = ()=>switchTab('archive');
 
 /* ---------------- PDF export (replicates NS-OPS template exactly) ---------------- */
-function exportPDF(){
-  syncStateFromDOM();
+function exportPDF(opts={}){
+  // Only re-read the on-screen editable sheet when exporting from the editor
+  // itself. When called from the Archives list, `state` already holds the
+  // correct archived record — re-syncing from the (possibly stale/hidden)
+  // editor DOM would overwrite it, e.g. with an empty ref.
+  if(opts.syncFromEditor !== false){
+    syncStateFromDOM();
+  }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const marginX = 20;
