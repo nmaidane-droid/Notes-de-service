@@ -463,7 +463,9 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte avant/après, sans bal
 }
 
 La note doit obligatoirement comporter ces sections, dans cet ordre, avec des titres identiques ou très proches : ${skeleton.join(' / ')}.
-Chaque section doit contenir un contenu substantiel (60 à 150 mots), concret et actionnable, pas de généralités vagues.`;
+Chaque section doit contenir un contenu substantiel (60 à 150 mots), concret et actionnable, pas de généralités vagues.
+
+Format JSON strict : échappe tous les retours à la ligne en \\n et tous les guillemets internes en \\" à l'intérieur des chaînes. N'insère jamais un saut de ligne réel dans une valeur de chaîne — uniquement des \\n littéraux. N'utilise pas de guillemets typographiques (« », " ") à l'intérieur du JSON, seulement des guillemets droits échappés si nécessaire.`;
 
   const userPrompt = `Sujet de la note : ${subject}
 Catégorie : ${state.category.label}
@@ -474,7 +476,7 @@ ${keyPoints ? 'Points clés à intégrer impérativement :\n' + keyPoints : ''}`
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        max_tokens: 1000,
+        max_tokens: 4000,
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }]
       })
@@ -484,8 +486,25 @@ ${keyPoints ? 'Points clés à intégrer impérativement :\n' + keyPoints : ''}`
       throw new Error(data.error?.message || data.error || 'Erreur API');
     }
     const raw = (data.content || []).map(b => b.text || '').join('\n');
-    const clean = raw.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(clean);
+    let clean = raw.replace(/```json|```/g, '').trim();
+    let parsed;
+    try{
+      parsed = JSON.parse(clean);
+    }catch(parseErr){
+      // Fallback: the model sometimes emits literal newlines inside JSON string
+      // values instead of escaped \n, which breaks strict JSON.parse. Repair by
+      // escaping raw control characters that occur *inside* quoted strings.
+      let repaired = '';
+      let inString = false;
+      let prevChar = '';
+      for(const ch of clean){
+        if(ch === '"' && prevChar !== '\\'){ inString = !inString; repaired += ch; prevChar = ch; continue; }
+        if(inString && (ch === '\n' || ch === '\r')){ repaired += '\\n'; prevChar = ch; continue; }
+        repaired += ch;
+        prevChar = ch;
+      }
+      parsed = JSON.parse(repaired);
+    }
 
     state.ref = ref;
     state.date = new Date().toLocaleDateString('fr-FR', {day:'2-digit',month:'long',year:'numeric'});
