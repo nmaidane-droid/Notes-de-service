@@ -208,7 +208,7 @@
   .objet-block{margin-bottom:20px;}
   .objet-block .lbl{
     font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:12.5px;
-    letter-spacing:0.03em;color:var(--bordeaux);
+    letter-spacing:0.03em;color:var(--ink);
   }
   .objet-block [contenteditable]{
     font-weight:600;font-size:15px;line-height:1.4;margin-top:4px;
@@ -221,8 +221,8 @@
   .section-block{margin-bottom:20px;}
   .section-block h3{
     font-family:'IBM Plex Sans',sans-serif;font-weight:700;font-size:12.5px;
-    text-transform:uppercase;letter-spacing:0.03em;color:var(--bordeaux);
-    border-bottom:1px solid var(--line-doc);padding-bottom:5px;margin:0 0 10px;
+    text-transform:uppercase;letter-spacing:0.03em;color:var(--ink);
+    margin:0 0 10px;
   }
   .section-block [contenteditable]{
     font-size:13.5px;line-height:1.7;white-space:pre-wrap;text-align:justify;
@@ -230,8 +230,8 @@
   [contenteditable]:focus{outline:none;background:rgba(139,0,0,0.05);}
 
   .closing[contenteditable]{
-    font-size:13px;line-height:1.6;margin:26px 0 34px;font-style:italic;
-    color:rgba(26,26,46,0.85);
+    font-size:13px;line-height:1.6;margin:26px 0 34px;
+    color:var(--ink);
   }
 
   .sign-block{
@@ -554,13 +554,11 @@ function renderSheet(){
       </tr>
       <tr>
         <td><span class="k">De / From</span><span contenteditable data-field="from">${state.from}</span></td>
+        <td><span class="k">Classification</span><span contenteditable data-field="classification">${state.classification}</span></td>
+      </tr>
+      <tr>
+        <td><span class="k">À / To</span><span contenteditable data-field="to">${state.to}</span></td>
         <td><span class="k">Révision</span><span contenteditable data-field="revision">${state.revision}</span></td>
-      </tr>
-      <tr>
-        <td colspan="2"><span class="k">À / To</span><span contenteditable data-field="to">${state.to}</span></td>
-      </tr>
-      <tr>
-        <td colspan="2"><span class="k">Classification</span><span contenteditable data-field="classification">${state.classification}</span></td>
       </tr>
     </table>
     <div class="objet-block">
@@ -716,16 +714,21 @@ function exportPDF(){
     doc.setFont('helvetica','bold');
     doc.setFontSize(8.5);
     doc.setTextColor(26,26,46);
-    doc.text('SAHARA AVIATION SAS — AFRIJET SAHARA', marginX, 14);
+    const brand = 'SAHARA AVIATION SAS — AFRIJET SAHARA';
+    doc.text(brand, marginX, 11);
+    const brandWidth = doc.getTextWidth(brand);
     doc.setFont('helvetica','normal');
-    doc.text('Direction des Opérations Aériennes', marginX, 14, {baseline:'top'}); // placeholder, overwritten below
+    doc.setTextColor(90,90,100);
+    doc.text('   Direction des Opérations Aériennes', marginX + brandWidth, 11);
+
     doc.setFontSize(8);
-    doc.text(`${state.ref} — Diffusion : PNT / Encadrement opérationnel — Document interne`, marginX, 18);
-    doc.text(`Page ${page}`, pageWidth - marginX, 18, { align: 'right' });
+    doc.text(`${state.ref} — Diffusion : PNT / Encadrement opérationnel — Document interne`, marginX, 16);
+    doc.text(`Page ${page}`, pageWidth - marginX, 16, { align: 'right' });
+
     doc.setDrawColor(139,0,0);
     doc.setLineWidth(0.4);
-    doc.line(marginX, 20.5, pageWidth - marginX, 20.5);
-    y = 30;
+    doc.line(marginX, 18.5, pageWidth - marginX, 18.5);
+    y = 28;
   }
 
   function newPage(){
@@ -756,17 +759,12 @@ function exportPDF(){
   }
 
   function writeSectionTitle(text){
-    // +3 gap before, ~11.5 for title+rule, reserved separately by caller via checkSpace(minBlock)
     y += 3;
     doc.setFont('helvetica','bold');
     doc.setFontSize(10.5);
-    doc.setTextColor(139,0,0);
+    doc.setTextColor(26,26,46);
     doc.text(text.toUpperCase(), marginX, y);
-    y += 1.5;
-    doc.setDrawColor(200,195,185);
-    doc.setLineWidth(0.2);
-    doc.line(marginX, y, pageWidth - marginX, y);
-    y += 6;
+    y += 7.5;
   }
 
   // Ensures a section title is never left alone at the bottom of a page:
@@ -778,7 +776,7 @@ function exportPDF(){
     doc.setFont('times', 'normal');
     doc.setFontSize(fontSize);
     const contentLines = doc.splitTextToSize(content, contentWidth);
-    const titleBlockHeight = 3 + 7 + 6; // gap + title/rule + gap after
+    const titleBlockHeight = 3 + 7.5; // gap + title
     const minOrphanLines = Math.min(2, contentLines.length);
     const reserved = titleBlockHeight + (minOrphanLines * lineHeight);
     checkSpace(reserved);
@@ -803,8 +801,8 @@ function exportPDF(){
   // Meta table
   const rows = [
     ['Réf. / Ref.', state.ref, 'Date', state.date],
-    ['De / From', state.from, 'Révision', state.revision],
-    ['À / To', state.to, 'Classification', state.classification]
+    ['De / From', state.from, 'Classification', state.classification],
+    ['À / To', state.to, 'Révision', state.revision]
   ];
   doc.setFontSize(8.7);
   const colW = contentWidth/2;
@@ -838,7 +836,7 @@ function exportPDF(){
   checkSpace(5 + 5 + 5.6);
   doc.setFont('helvetica','bold');
   doc.setFontSize(9.5);
-  doc.setTextColor(139,0,0);
+  doc.setTextColor(26,26,46);
   doc.text('OBJET :', marginX, y);
   y += 5;
   writeParagraph(state.objet, { fontSize: 11.5, lineHeight: 5.6, bold: true });
@@ -856,9 +854,9 @@ function exportPDF(){
 
   // Closing
   y += 2;
-  doc.setFont('times','italic');
+  doc.setFont('times','normal');
   doc.setFontSize(9.8);
-  doc.setTextColor(60,55,55);
+  doc.setTextColor(26,26,46);
   const closingLines = doc.splitTextToSize(state.closingText || state.closing, contentWidth);
   closingLines.forEach(line=>{ checkSpace(5); doc.text(line, marginX, y); y+=5; });
 
