@@ -1,3 +1,9 @@
+// Raises the allowed execution time on plans that support it (Vercel Hobby
+// hard-caps at 10s regardless; Pro/Enterprise can go up to 60s+ with this).
+export const config = {
+  maxDuration: 60,
+};
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
