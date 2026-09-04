@@ -178,7 +178,7 @@
     font-family:'IBM Plex Sans',sans-serif;
     font-size:12px;color:#fff;
     background:var(--bordeaux);
-    display:flex;justify-content:space-between;align-items:baseline;
+    display:flex;justify-content:space-between;align-items:center;
     padding:11px 30px;
     line-height:1.4;
   }
@@ -346,19 +346,19 @@
 /* ---------------- Category skeletons ---------------- */
 const CATEGORIES = [
   {
-    id:'technique', label:'Technique / Maintenance', hint:'Moteur, cellule, systèmes',
+    id:'technique', label:'Technique / Maintenance', hint:'Moteur, cellule, systèmes', prefix:'TEC',
     sections:['Contexte','Causes / Facteurs','Risques','Mesures d\u2019atténuation','Procédures applicables']
   },
   {
-    id:'securite', label:'Sécurité des vols', hint:'Événement, consigne',
+    id:'securite', label:'Sécurité des vols', hint:'Événement, consigne', prefix:'SEC',
     sections:['Contexte','Constat / Événement','Analyse des causes','Actions correctives','Consignes applicables']
   },
   {
-    id:'operationnel', label:'Opérationnel', hint:'Décision, procédure',
+    id:'operationnel', label:'Opérationnel', hint:'Décision, procédure', prefix:'OPS',
     sections:['Contexte','Objet de la décision','Modalités d\u2019application','Responsabilités','Date d\u2019entrée en vigueur']
   },
   {
-    id:'rh', label:'RH / Administratif', hint:'Personnel, organisation',
+    id:'rh', label:'RH / Administratif', hint:'Personnel, organisation', prefix:'ADM',
     sections:['Contexte','Décision','Modalités pratiques','Personnel concerné','Contact / Questions']
   }
 ];
@@ -381,16 +381,25 @@ let state = {
   closing: 'Cette note de service est applicable dès diffusion et doit être portée à la connaissance du personnel concerné. Toute question ou retour d\u2019expérience relatif à son application est à adresser à la Direction des Opérations Aériennes.'
 };
 
-/* ---------------- Reference counter ---------------- */
-function nextRef(){
-  const year = new Date().getFullYear();
-  let counter = parseInt(localStorage.getItem('ns:counter') || '15', 10);
-  const ref = `NS-OPS-${year}-${String(counter).padStart(3,'0')}`;
-  return ref;
+/* ---------------- Reference counter: NS-[DOMAINE]-AAAAMMJJ-NN, par catégorie et par jour ---------------- */
+function todayStamp(){
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth()+1).padStart(2,'0');
+  const d = String(now.getDate()).padStart(2,'0');
+  return `${y}${m}${d}`;
 }
-function commitRefCounter(){
-  let counter = parseInt(localStorage.getItem('ns:counter') || '15', 10);
-  localStorage.setItem('ns:counter', String(counter + 1));
+function nextRef(prefix){
+  const p = prefix || 'OPS';
+  const key = `ns:seq:${p}-${todayStamp()}`;
+  const seq = parseInt(localStorage.getItem(key) || '0', 10) + 1;
+  return `NS-${p}-${todayStamp()}-${String(seq).padStart(2,'0')}`;
+}
+function commitRefCounter(prefix){
+  const p = prefix || 'OPS';
+  const key = `ns:seq:${p}-${todayStamp()}`;
+  const seq = parseInt(localStorage.getItem(key) || '0', 10) + 1;
+  localStorage.setItem(key, String(seq));
 }
 
 /* ---------------- UI: category grid ---------------- */
@@ -403,11 +412,12 @@ CATEGORIES.forEach(cat=>{
     document.querySelectorAll('.cat-btn').forEach(b=>b.classList.remove('selected'));
     btn.classList.add('selected');
     state.category = cat;
+    document.getElementById('refInput').value = nextRef(cat.prefix);
   };
   catGrid.appendChild(btn);
 });
 
-document.getElementById('refInput').value = nextRef();
+document.getElementById('refInput').value = nextRef('OPS');
 
 /* ---------------- Diffusion checklist (custom, non-native) ---------------- */
 const DIFFUSION_OPTIONS = [
@@ -458,7 +468,7 @@ async function generateNote(){
   const keyPoints = document.getElementById('keyPoints').value.trim();
   const to = computeTo();
   if(!to){ errEl.textContent = 'Sélectionnez au moins un destinataire.'; errEl.style.display='block'; btn.disabled=false; btn.textContent='Générer la note'; return; }
-  const ref = document.getElementById('refInput').value.trim() || nextRef();
+  const ref = document.getElementById('refInput').value.trim() || nextRef(state.category.prefix);
 
   const skeleton = state.category.sections;
 
@@ -634,8 +644,9 @@ function saveToArchive(){
   };
   archive.unshift(record);
   localStorage.setItem('ns:archive', JSON.stringify(archive));
-  commitRefCounter();
-  document.getElementById('refInput').value = nextRef();
+  const prefix = state.category ? state.category.prefix : 'OPS';
+  commitRefCounter(prefix);
+  document.getElementById('refInput').value = nextRef(prefix);
   alert('Note enregistrée dans les archives : ' + record.ref);
   renderArchiveList();
 }
@@ -722,9 +733,9 @@ function exportPDF(){
     doc.setFont('helvetica','bold');
     doc.setFontSize(9.5);
     doc.setTextColor(255,255,255);
-    doc.text('SAHARA AVIATION SAS  —  AFRIJET SAHARA', marginX, BAND_H/2 + 2.2);
+    doc.text('SAHARA AVIATION SAS  —  AFRIJET SAHARA', marginX, BAND_H/2, { baseline:'middle' });
     doc.setFont('helvetica','normal');
-    doc.text('Direction des Opérations Aériennes', pageWidth - marginX, BAND_H/2 + 2.2, { align:'right' });
+    doc.text('Direction des Opérations Aériennes', pageWidth - marginX, BAND_H/2, { align:'right', baseline:'middle' });
     y = BAND_H + 14;
   }
 
