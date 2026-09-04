@@ -477,7 +477,21 @@ async function generateNote(){
   if(!to){ errEl.textContent = 'Sélectionnez au moins un destinataire.'; errEl.style.display='block'; btn.disabled=false; btn.textContent='Générer la note'; return; }
   const ref = document.getElementById('refInput').value.trim() || nextRef(state.category.prefix);
 
-  const skeleton = state.category.sections;
+  // Fuse the technical and operational angles ONLY for the specific PNT +
+  // Encadrement Opérations + Maintenance/Technique combination — not for
+  // PNC, Direction Générale, RH, etc., and not for the Sécurité category.
+  const touchesMaintenance = diffusionSelected.has('Maintenance / Technique');
+  const touchesCrewOrOps = diffusionSelected.has('Ensemble des Pilotes (PNT)')
+    || diffusionSelected.has('Encadrement Opérations');
+  const shouldFuse = touchesMaintenance && touchesCrewOrOps
+    && ['technique','operationnel'].includes(state.category.id);
+
+  const FUSION_SECTIONS = ['Contexte', 'Causes et mécanismes techniques', 'Risques opérationnels et techniques', 'Mesures d\u2019atténuation et modalités d\u2019application', 'Procédures équipage, maintenance et responsabilités'];
+  const skeleton = shouldFuse ? FUSION_SECTIONS : state.category.sections;
+
+  const fusionInstruction = shouldFuse
+    ? `\n\nCette note est diffusée à la fois au personnel navigant (${to}) et à la maintenance technique : chaque section pertinente doit combiner l'angle technique (causes, mécanismes physiques, paramètres moteur, seuils) ET l'angle opérationnel/procédural (actions équipage, seuils de déclenchement, procédures, responsabilités). Ne traite pas un seul angle en ignorant l'autre — les deux publics doivent trouver une information directement exploitable pour leur rôle respectif.`
+    : '';
 
   const systemPrompt = `Tu rédiges des notes de service internes pour une compagnie aérienne. ${STYLE_REFERENCE}
 
@@ -492,12 +506,18 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte avant/après, sans bal
 }
 
 La note doit obligatoirement comporter ces sections, dans cet ordre, avec des titres identiques ou très proches : ${skeleton.join(' / ')}.
-Chaque section doit contenir un contenu substantiel (60 à 150 mots), concret et actionnable, pas de généralités vagues.
+Chaque section doit contenir un contenu substantiel (60 à 150 mots), concret et actionnable, pas de généralités vagues.${fusionInstruction}
+
+Mise en forme du champ "content" de chaque section (obligatoire, pour un rendu PDF correct) :
+- Si une section a besoin de sous-parties numérotées, écris chaque sous-titre EN MAJUSCULES sur sa PROPRE ligne (séparée par \\n), au format "1. TITRE DU SOUS-POINT" — jamais en milieu de phrase.
+- Chaque puce commence par "• " et occupe sa propre ligne (séparée par \\n) — jamais plusieurs puces sur la même ligne, jamais de puce fondue dans un paragraphe.
+- Les phrases de liaison qui ne sont ni un sous-titre ni une puce restent en paragraphe normal, sur leur propre ligne.
 
 Format JSON strict : échappe tous les retours à la ligne en \\n et tous les guillemets internes en \\" à l'intérieur des chaînes. N'insère jamais un saut de ligne réel dans une valeur de chaîne — uniquement des \\n littéraux. N'utilise pas de guillemets typographiques (« », " ") à l'intérieur du JSON, seulement des guillemets droits échappés si nécessaire.`;
 
   const userPrompt = `Sujet de la note : ${subject}
 Catégorie : ${state.category.label}
+Diffusion : ${to}
 ${keyPoints ? 'Points clés à intégrer impérativement :\n' + keyPoints : ''}`;
 
   try{
@@ -828,6 +848,52 @@ function exportPDF(opts={}){
   // Ensures a section title is never left alone at the bottom of a page:
   // reserves room for the title block PLUS at least the first couple of
   // content lines before deciding whether to break to a new page.
+  // Renders a section's body with structure: standalone numbered ALL-CAPS
+  // sub-headers ("1. TITRE") in bold, "• " bullets with a hanging indent so
+  // wrapped lines align under the text (not under the bullet), and plain
+  // paragraph lines justified as before.
+  function writeSectionBody(content, opts={}){
+    const fontSize = opts.fontSize || 10.3;
+    const lineHeight = opts.lineHeight || 5;
+    const bulletTextX = marginX + 5.5;
+    const bulletMarkX = marginX + 1.5;
+    const lines = String(content).split('\n').map(l=>l.trim()).filter(l=>l.length>0);
+
+    lines.forEach(line=>{
+      const isSubheader = /^\d+[.)]\s+\S/.test(line) && line === line.toUpperCase();
+      const isBullet = line.startsWith('•');
+
+      if(isSubheader){
+        checkSpace(lineHeight + 4);
+        y += 2.5;
+        doc.setFont('helvetica','bold');
+        doc.setFontSize(fontSize + 0.1);
+        doc.setTextColor(26,26,46);
+        const wrapped = doc.splitTextToSize(line, contentWidth);
+        wrapped.forEach(w=>{ checkSpace(lineHeight); doc.text(w, marginX, y); y += lineHeight; });
+        y += 1;
+      } else if(isBullet){
+        const bulletText = line.replace(/^•\s*/, '');
+        doc.setFont('times','normal');
+        doc.setFontSize(fontSize);
+        doc.setTextColor(26,26,46);
+        const wrapped = doc.splitTextToSize(bulletText, contentWidth - (bulletTextX - marginX));
+        wrapped.forEach((w,idx)=>{
+          checkSpace(lineHeight);
+          if(idx===0){ doc.text('•', bulletMarkX, y); }
+          doc.text(w, bulletTextX, y);
+          y += lineHeight;
+        });
+      } else {
+        doc.setFont('times','normal');
+        doc.setFontSize(fontSize);
+        doc.setTextColor(26,26,46);
+        const wrapped = doc.splitTextToSize(line, contentWidth);
+        wrapped.forEach(w=>{ checkSpace(lineHeight); doc.text(w, marginX, y); y += lineHeight; });
+      }
+    });
+  }
+
   function writeSection(title, content, opts={}){
     const fontSize = opts.fontSize || 10.3;
     const lineHeight = opts.lineHeight || 5;
@@ -839,7 +905,7 @@ function exportPDF(opts={}){
     const reserved = titleBlockHeight + (minOrphanLines * lineHeight);
     checkSpace(reserved);
     writeSectionTitle(title);
-    writeParagraph(content, { fontSize, lineHeight });
+    writeSectionBody(content, { fontSize, lineHeight });
   }
 
   drawHeaderBand();
