@@ -232,6 +232,19 @@
   .section-block [contenteditable]{
     font-size:13.5px;line-height:1.7;white-space:pre-wrap;text-align:justify;
   }
+  .risk-table{
+    width:100%;border-collapse:collapse;margin-top:8px;
+    font-family:'IBM Plex Sans',sans-serif;font-size:12px;
+  }
+  .risk-table th{
+    background:var(--ink);color:#fff;font-weight:700;text-align:left;
+    padding:8px 10px;border:1px solid var(--ink);
+  }
+  .risk-table td{
+    padding:8px 10px;border:1px solid var(--line-doc);vertical-align:top;
+    font-family:'Source Serif 4',serif;
+  }
+  .risk-table tbody tr:nth-child(even){background:var(--off-white);}
   [contenteditable]:focus{outline:none;background:rgba(139,0,0,0.05);}
 
   .closing[contenteditable]{
@@ -501,12 +514,15 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte avant/après, sans bal
   "intro": "paragraphe d'introduction (3-5 phrases) situant le contexte et le but de la note",
   "sections": [
     {"title": "Titre section 1", "content": "contenu détaillé, plusieurs phrases et/ou puces avec •"},
+    {"title": "Risques", "content": "phrase d'intro courte ou chaîne vide", "table": {"headers": ["Risque","Origine / Facteur déclenchant","Conséquence opérationnelle"], "rows": [["...","...","..."]]}},
     ...
   ]
 }
 
 La note doit obligatoirement comporter ces sections, dans cet ordre, avec des titres identiques ou très proches : ${skeleton.join(' / ')}.
 Chaque section doit contenir un contenu substantiel (60 à 150 mots), concret et actionnable, pas de généralités vagues.${fusionInstruction}
+
+Tableau des risques (obligatoire dès qu'une section traite des risques ou de leurs conséquences — titre contenant "Risque(s)") : ajoute un champ "table" avec exactement les colonnes ["Risque","Origine / Facteur déclenchant","Conséquence opérationnelle"] et 4 à 7 lignes concrètes et spécifiques au sujet (jamais de généralités). Le "content" de cette section reste court (une phrase d'intro, ou une chaîne vide) — le détail va dans le tableau, pas dans le texte. N'ajoute PAS de champ "table" pour les autres sections.
 
 Mise en forme du champ "content" de chaque section (obligatoire, pour un rendu PDF correct) :
 - Si une section a besoin de sous-parties numérotées, écris chaque sous-titre EN MAJUSCULES sur sa PROPRE ligne (séparée par \\n), au format "1. TITRE DU SOUS-POINT" — jamais en milieu de phrase.
@@ -621,8 +637,17 @@ function renderSheet(){
   state.sections.forEach((sec, i)=>{
     const div = document.createElement('div');
     div.className = 'section-block';
+    let tableHtml = '';
+    if(sec.table && Array.isArray(sec.table.headers) && Array.isArray(sec.table.rows)){
+      tableHtml = `<table class="risk-table"><thead><tr>${
+        sec.table.headers.map(h=>`<th>${h}</th>`).join('')
+      }</tr></thead><tbody>${
+        sec.table.rows.map(row=>`<tr>${row.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')
+      }</tbody></table>`;
+    }
     div.innerHTML = `<h3 contenteditable data-sec-title="${i}">${sec.title}</h3>
-      <div contenteditable data-sec-content="${i}">${sec.content}</div>`;
+      ${sec.content ? `<div contenteditable data-sec-content="${i}">${sec.content}</div>` : `<div contenteditable data-sec-content="${i}" style="display:none;"></div>`}
+      ${tableHtml}`;
     host.appendChild(div);
   });
 
@@ -655,7 +680,8 @@ function syncStateFromDOM(){
   state.closingText = get('[data-field="closing"]');
   state.sections = state.sections.map((sec,i)=>({
     title: get(`[data-sec-title="${i}"]`) || sec.title,
-    content: get(`[data-sec-content="${i}"]`) || sec.content
+    content: get(`[data-sec-content="${i}"]`) || sec.content,
+    table: sec.table // preserved as-is; the table itself isn't inline-editable in the sheet
   }));
 }
 
@@ -782,6 +808,9 @@ document.getElementById('tabArchive').onclick = ()=>switchTab('archive');
 
 /* ---------------- PDF export (replicates NS-OPS template exactly) ---------------- */
 function exportPDF(opts={}){
+  // Build tag embedded in PDF metadata (Fichier > Propriétés côté lecteur PDF) —
+  // permet de vérifier à coup sûr quelle version de l'appli a produit un PDF donné.
+  const APP_BUILD = 'nds-2026-09-04-3';
   // Only re-read the on-screen editable sheet when exporting from the editor
   // itself. When called from the Archives list, `state` already holds the
   // correct archived record — re-syncing from the (possibly stale/hidden)
@@ -791,6 +820,7 @@ function exportPDF(opts={}){
   }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  doc.setProperties({ creator: `Notes de Service Afrijet Sahara — ${APP_BUILD}`, title: state.ref || 'Note de service' });
   const marginX = 20;
   const pageWidth = 210;
   const pageHeight = 297;
@@ -894,18 +924,86 @@ function exportPDF(opts={}){
     });
   }
 
-  function writeSection(title, content, opts={}){
+  function writeSection(title, content, opts={}, table=null){
     const fontSize = opts.fontSize || 10.3;
     const lineHeight = opts.lineHeight || 5;
     doc.setFont('times', 'normal');
     doc.setFontSize(fontSize);
-    const contentLines = doc.splitTextToSize(content, contentWidth);
+    const contentLines = content ? doc.splitTextToSize(content, contentWidth) : [];
     const titleBlockHeight = 3 + 7.5;
     const minOrphanLines = Math.min(2, contentLines.length);
     const reserved = titleBlockHeight + (minOrphanLines * lineHeight);
     checkSpace(reserved);
     writeSectionTitle(title);
-    writeSectionBody(content, { fontSize, lineHeight });
+    if(content && content.trim()){
+      writeSectionBody(content, { fontSize, lineHeight });
+      y += 3;
+    }
+    if(table && Array.isArray(table.headers) && Array.isArray(table.rows) && table.rows.length){
+      writeRiskTable(table);
+    }
+  }
+
+  // Renders a 3-column table with a dark header row and alternating body
+  // rows (light off-white / white) — matches the "Risques opérationnels"
+  // table style from the original NS-OPS-2026-014 reference document.
+  function writeRiskTable(table){
+    const cols = table.headers.length;
+    const colWidths = cols === 3
+      ? [contentWidth*0.24, contentWidth*0.36, contentWidth*0.40]
+      : Array(cols).fill(contentWidth/cols);
+    const cellPad = 2.2;
+    const bodyFontSize = 9;
+    const headFontSize = 9;
+    const lh = 4.1;
+
+    function colX(idx){
+      let x = marginX;
+      for(let k=0;k<idx;k++) x += colWidths[k];
+      return x;
+    }
+    function rowHeightFor(cells, fontSize){
+      doc.setFontSize(fontSize);
+      let maxLines = 1;
+      cells.forEach((cell,idx)=>{
+        const w = colWidths[idx] - cellPad*2;
+        const lines = doc.splitTextToSize(String(cell), w);
+        maxLines = Math.max(maxLines, lines.length);
+      });
+      return maxLines*lh + cellPad*2;
+    }
+    function drawRow(cells, opts={}){
+      const { header=false, shade=false, fontSize=bodyFontSize } = opts;
+      const rowH = rowHeightFor(cells, fontSize);
+      checkSpace(rowH);
+      if(header){
+        doc.setFillColor(26,26,46);
+        doc.rect(marginX, y, contentWidth, rowH, 'F');
+      } else if(shade){
+        doc.setFillColor(245,243,239);
+        doc.rect(marginX, y, contentWidth, rowH, 'F');
+      }
+      doc.setDrawColor(200,197,190);
+      doc.setLineWidth(0.15);
+      doc.rect(marginX, y, contentWidth, rowH);
+      for(let k=1;k<cols;k++){
+        doc.line(colX(k), y, colX(k), y+rowH);
+      }
+      doc.setFont('helvetica', header ? 'bold' : 'normal');
+      doc.setFontSize(fontSize);
+      doc.setTextColor(header ? 255 : 26, header ? 255 : 26, header ? 255 : 46);
+      cells.forEach((cell,idx)=>{
+        const w = colWidths[idx] - cellPad*2;
+        const lines = doc.splitTextToSize(String(cell), w);
+        let ly = y + cellPad + lh*0.75;
+        lines.forEach(line=>{ doc.text(line, colX(idx)+cellPad, ly); ly += lh; });
+      });
+      y += rowH;
+    }
+
+    drawRow(table.headers, { header:true, fontSize: headFontSize });
+    table.rows.forEach((row, i)=>{ drawRow(row, { shade: i % 2 === 1 }); });
+    y += 4;
   }
 
   drawHeaderBand();
@@ -971,7 +1069,7 @@ function exportPDF(opts={}){
 
   // Sections
   state.sections.forEach((sec, i)=>{
-    writeSection(`${i+1}. ${sec.title}`, sec.content, { fontSize: 10.3, lineHeight: 5 });
+    writeSection(`${i+1}. ${sec.title}`, sec.content, { fontSize: 10.3, lineHeight: 5 }, sec.table);
     y += 5;
   });
 
