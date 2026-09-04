@@ -274,11 +274,13 @@
 
   /* ---------- Archive ---------- */
   .archive-panel{padding:36px 40px 80px;max-width:920px;margin:0 auto;width:100%;background:var(--off-white);}
+  .archive-toolbar{display:flex;gap:10px;margin-bottom:22px;}
   .archive-search{
-    width:100%;background:var(--white);border:1px solid var(--line-doc);
+    flex:1;width:100%;background:var(--white);border:1px solid var(--line-doc);
     color:var(--ink);padding:11px 14px;border-radius:2px;
-    font-family:'IBM Plex Sans',sans-serif;font-size:14px;margin-bottom:22px;
+    font-family:'IBM Plex Sans',sans-serif;font-size:14px;
   }
+  .archive-toolbar .btn-secondary{white-space:nowrap;}
   .archive-row{
     display:flex;flex-direction:column;align-items:stretch;gap:12px;
     padding:16px 16px 14px;border:1px solid var(--line-doc);
@@ -360,7 +362,11 @@
   </section>
 
   <section class="archive-panel" id="archivePanel" style="display:none;">
-    <input class="archive-search" id="archiveSearch" placeholder="Rechercher par référence, sujet ou catégorie…">
+    <div class="archive-toolbar">
+      <input class="archive-search" id="archiveSearch" placeholder="Rechercher par référence, sujet ou catégorie…">
+      <button class="btn-secondary" id="importBtn" title="Importer une note (.json)">Importer</button>
+      <input type="file" id="importFile" accept="application/json" style="display:none;">
+    </div>
     <div id="archiveList"></div>
   </section>
 </main>
@@ -820,6 +826,50 @@ function renderArchiveList(filter=''){
 }
 
 document.getElementById('archiveSearch').addEventListener('input', e=>renderArchiveList(e.target.value));
+
+/* ---------------- Import (.json) ---------------- */
+document.getElementById('importBtn').onclick = ()=>document.getElementById('importFile').click();
+document.getElementById('importFile').addEventListener('change', async (e)=>{
+  const file = e.target.files[0];
+  e.target.value = ''; // allow re-importing the same file later
+  if(!file) return;
+  try{
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    const records = Array.isArray(parsed) ? parsed : [parsed];
+    const archive = JSON.parse(localStorage.getItem('ns:archive') || '[]');
+    let imported = 0;
+    records.forEach(rec=>{
+      if(!rec || !rec.ref || !Array.isArray(rec.sections)) return;
+      archive.unshift({
+        id: rec.id || (rec.ref + '-' + Date.now() + '-' + imported),
+        ref: rec.ref,
+        date: rec.date || '',
+        from: rec.from || 'Direction des Opérations Aériennes',
+        to: rec.to || '',
+        classification: rec.classification || 'Diffusion interne',
+        revision: rec.revision || '01',
+        objet: rec.objet || '',
+        intro: rec.intro || '',
+        sections: rec.sections,
+        closingText: rec.closingText || rec.closing || '',
+        category: rec.category || '',
+        savedAt: new Date().toISOString()
+      });
+      imported++;
+    });
+    if(imported === 0){
+      showToast('Fichier non reconnu — format de note invalide.');
+      return;
+    }
+    localStorage.setItem('ns:archive', JSON.stringify(archive));
+    showToast(imported > 1 ? `${imported} notes importées.` : 'Note importée dans les archives.');
+    renderArchiveList(document.getElementById('archiveSearch').value);
+  }catch(err){
+    showToast('Échec de l\u2019import : fichier JSON invalide.');
+    console.error(err);
+  }
+});
 
 /* ---------------- Tabs ---------------- */
 function switchTab(tab){
