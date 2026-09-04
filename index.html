@@ -482,7 +482,9 @@ function renumberSubsections(sections){
     let subIdx = 0;
     const lines = String(sec.content||'').split('\n').map(line=>{
       const trimmed = line.trim();
-      const m = trimmed.match(/^\d+(?:\.\d+)?[.)]\s+(.+)$/);
+      // Accepts "1. TITRE", "1) TITRE" and already-numbered "2.1 TITRE" forms,
+      // so both AI output and imported notes get renumbered consistently.
+      const m = trimmed.match(/^\d+(?:\.\d+)?[.)]?\s+(.+)$/);
       if(m && trimmed === trimmed.toUpperCase()){
         subIdx++;
         return `${sectionNum}.${subIdx} ${m[1]}`;
@@ -684,6 +686,10 @@ function renderSheet(){
     host.appendChild(div);
   });
 
+  // Remove any action bar left over from a previous render, otherwise opening
+  // several archived notes in a row stacks duplicate Save / PDF buttons.
+  document.querySelectorAll('.sheet-actions').forEach(el=>el.remove());
+
   const actions = document.createElement('div');
   actions.className = 'sheet-actions';
   actions.innerHTML = `
@@ -692,7 +698,7 @@ function renderSheet(){
   `;
   sheet.after(actions);
   document.getElementById('saveBtn').onclick = saveToArchive;
-  document.getElementById('pdfBtn').onclick = exportPDF;
+  document.getElementById('pdfBtn').onclick = ()=>exportPDF();
 
   sheet.querySelectorAll('[contenteditable]').forEach(el=>{
     el.addEventListener('blur', syncStateFromDOM);
@@ -719,21 +725,43 @@ function syncStateFromDOM(){
 }
 
 /* ---------------- Archive (localStorage) ---------------- */
+// localStorage has a ~5MB quota. Without this guard a failed write would throw
+// silently and the note would appear saved while actually being lost.
+function persistArchive(archive){
+  try{
+    localStorage.setItem('ns:archive', JSON.stringify(archive));
+    return true;
+  }catch(err){
+    showToast('Stockage plein — supprimez d’anciennes notes des archives.');
+    console.error('localStorage write failed:', err);
+    return false;
+  }
+}
 function saveToArchive(){
   syncStateFromDOM();
   const archive = JSON.parse(localStorage.getItem('ns:archive') || '[]');
+  const existingIdx = archive.findIndex(r => r.ref === state.ref);
   const record = {
-    id: state.ref + '-' + Date.now(),
+    id: (existingIdx >= 0 ? archive[existingIdx].id : state.ref + '-' + Date.now()),
     ...state,
     category: state.category ? state.category.label : '',
     savedAt: new Date().toISOString()
   };
-  archive.unshift(record);
-  localStorage.setItem('ns:archive', JSON.stringify(archive));
-  const prefix = state.category ? state.category.prefix : 'OPS';
-  commitRefCounter(prefix);
-  document.getElementById('refInput').value = nextRef(prefix);
-  showToast('Note enregistrée dans les archives — ' + record.ref);
+
+  if(existingIdx >= 0){
+    // Re-saving a note opened from Archives updates it in place instead of
+    // creating a duplicate entry under the same reference.
+    archive[existingIdx] = record;
+    if(!persistArchive(archive)) return;
+    showToast('Note mise à jour — ' + record.ref);
+  } else {
+    archive.unshift(record);
+    if(!persistArchive(archive)) return;
+    const prefix = state.category ? state.category.prefix : 'OPS';
+    commitRefCounter(prefix);
+    document.getElementById('refInput').value = nextRef(prefix);
+    showToast('Note enregistrée dans les archives — ' + record.ref);
+  }
   renderArchiveList();
 }
 
@@ -765,18 +793,24 @@ function showToast(message){
 }
 
 function loadFromArchive(record){
-  state = { ...record, category: CATEGORIES.find(c=>c.label===record.category) || null };
+  const cat = CATEGORIES.find(c=>c.label===record.category) || null;
+  state = { ...record, category: cat };
+  // Keep the left-hand controls in sync with the note being opened, otherwise
+  // the category buttons / ref field still show the previous note's values.
+  document.querySelectorAll('.cat-btn').forEach((b,i)=>{
+    b.classList.toggle('selected', !!cat && CATEGORIES[i].id === cat.id);
+  });
+  if(record.ref) document.getElementById('refInput').value = record.ref;
   switchTab('editor');
   renderSheet();
 }
 
-/* Delete uses a two-tap inline confirm on the button itself instead of
-   window.confirm(), which some mobile browser contexts suppress silently. */
+/* Deletion uses the native browser confirm dialog. */
 function deleteFromArchive(id){
   if(!confirm('Supprimer cette note des archives ?')) return;
   let archive = JSON.parse(localStorage.getItem('ns:archive') || '[]');
   archive = archive.filter(r=>r.id!==id);
-  localStorage.setItem('ns:archive', JSON.stringify(archive));
+  persistArchive(archive);
   renderArchiveList();
 }
 
@@ -810,7 +844,7 @@ function renderArchiveList(filter=''){
       </div>
     `;
     row.querySelector('[data-act="open"]').onclick = (e)=>{ e.stopPropagation(); loadFromArchive(r); };
-    row.querySelector('[data-act="pdf"]').onclick = (e)=>{ e.stopPropagation(); state = {...r, category: CATEGORIES.find(c=>c.label===r.category)}; exportPDF({syncFromEditor:false}); };
+    row.querySelector('[data-act="pdf"]').onclick = (e)=>{ e.stopPropagation(); state = {...r, category: CATEGORIES.find(c=>c.label===r.category) || null}; exportPDF({syncFromEditor:false}); };
     row.querySelector('[data-act="del"]').onclick = (e)=>{ e.stopPropagation(); deleteFromArchive(r.id); };
 
     row.querySelectorAll('.actions button').forEach(btn=>{
@@ -839,9 +873,10 @@ document.getElementById('importFile').addEventListener('change', async (e)=>{
     const records = Array.isArray(parsed) ? parsed : [parsed];
     const archive = JSON.parse(localStorage.getItem('ns:archive') || '[]');
     let imported = 0;
+    let replaced = 0;
     records.forEach(rec=>{
       if(!rec || !rec.ref || !Array.isArray(rec.sections)) return;
-      archive.unshift({
+      const entry = {
         id: rec.id || (rec.ref + '-' + Date.now() + '-' + imported),
         ref: rec.ref,
         date: rec.date || '',
@@ -851,22 +886,36 @@ document.getElementById('importFile').addEventListener('change', async (e)=>{
         revision: rec.revision || '01',
         objet: rec.objet || '',
         intro: rec.intro || '',
-        sections: rec.sections,
+        sections: renumberSubsections(rec.sections),
         closingText: rec.closingText || rec.closing || '',
         category: rec.category || '',
         savedAt: new Date().toISOString()
-      });
+      };
+      // Re-importing the same file updates the existing entry instead of
+      // piling up duplicates under the same reference.
+      const existingIdx = archive.findIndex(r => r.ref === entry.ref);
+      if(existingIdx >= 0){
+        entry.id = archive[existingIdx].id;
+        archive[existingIdx] = entry;
+        replaced++;
+      } else {
+        archive.unshift(entry);
+      }
       imported++;
     });
     if(imported === 0){
       showToast('Fichier non reconnu — format de note invalide.');
       return;
     }
-    localStorage.setItem('ns:archive', JSON.stringify(archive));
-    showToast(imported > 1 ? `${imported} notes importées.` : 'Note importée dans les archives.');
+    if(!persistArchive(archive)) return;
+    showToast(
+      replaced === imported
+        ? (imported > 1 ? `${imported} notes mises à jour.` : 'Note mise à jour dans les archives.')
+        : (imported > 1 ? `${imported} notes importées.` : 'Note importée dans les archives.')
+    );
     renderArchiveList(document.getElementById('archiveSearch').value);
   }catch(err){
-    showToast('Échec de l\u2019import : fichier JSON invalide.');
+    showToast('Échec de l’import : fichier JSON invalide.');
     console.error(err);
   }
 });
@@ -878,6 +927,11 @@ function switchTab(tab){
   document.getElementById('editorAside').style.display = tab==='editor' ? 'flex' : 'none';
   document.getElementById('workspace').style.display = tab==='editor' ? 'flex' : 'none';
   document.getElementById('archivePanel').style.display = tab==='archive' ? 'block' : 'none';
+  // The Save/PDF bar lives outside #workspace, so it must be hidden explicitly
+  // when switching to Archives — otherwise it stays visible over that panel.
+  document.querySelectorAll('.sheet-actions').forEach(el=>{
+    el.style.display = tab==='editor' ? 'flex' : 'none';
+  });
   if(tab==='archive') renderArchiveList(document.getElementById('archiveSearch').value);
 }
 document.getElementById('tabEditor').onclick = ()=>switchTab('editor');
@@ -887,7 +941,7 @@ document.getElementById('tabArchive').onclick = ()=>switchTab('archive');
 function exportPDF(opts={}){
   // Build tag embedded in PDF metadata (Fichier > Propriétés côté lecteur PDF) —
   // permet de vérifier à coup sûr quelle version de l'appli a produit un PDF donné.
-  const APP_BUILD = 'nds-2026-09-04-5';
+  const APP_BUILD = 'nds-2026-09-04-6';
   // Only re-read the on-screen editable sheet when exporting from the editor
   // itself. When called from the Archives list, `state` already holds the
   // correct archived record — re-syncing from the (possibly stale/hidden)
@@ -1128,9 +1182,9 @@ function exportPDF(opts={}){
 
   // Meta rows — plain text, no cell borders, two columns
   const rows = [
-    ['Réf. / Ref.', state.ref, 'Date', state.date],
-    ['De / From', state.from, 'Classification', state.classification],
-    ['À / To', state.to, 'Révision', state.revision]
+    ['Réf. / Ref.', state.ref || '', 'Date', state.date || ''],
+    ['De / From', state.from || '', 'Classification', state.classification || ''],
+    ['À / To', state.to || '', 'Révision', state.revision || '']
   ];
   const colW = contentWidth/2;
   const labelW = 24;
@@ -1158,11 +1212,11 @@ function exportPDF(opts={}){
 
   // OBJET — single bold black paragraph, "OBJET : " inline (not a separate colored label)
   checkSpace(12);
-  writeParagraph(`OBJET : ${state.objet}`, { fontSize: 11, lineHeight: 5.6, bold: true });
+  writeParagraph(`OBJET : ${state.objet || ''}`, { fontSize: 11, lineHeight: 5.6, bold: true });
   y += 4;
 
   // Intro
-  writeParagraph(state.intro, { fontSize: 10.3, lineHeight: 5 });
+  writeParagraph(state.intro || '', { fontSize: 10.3, lineHeight: 5 });
   y += 4;
 
   // Sections
@@ -1210,7 +1264,9 @@ function exportPDF(opts={}){
     doc.text(`Page ${p}`, pageWidth - marginX, pageHeight - 10, { align:'right' });
   }
 
-  doc.save(`${state.ref}.pdf`);
+  // Sanitize: a ref containing "/" or other path chars would break the download.
+  const safeName = String(state.ref || 'note-de-service').replace(/[\/\\:*?"<>|]/g, '-');
+  doc.save(`${safeName}.pdf`);
 }
 </script>
 </body>
